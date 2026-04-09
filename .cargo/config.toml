@@ -1,0 +1,12 @@
+# Cross-compilation configuration for ESP32-S3 (Xtensa LX7)
+#
+# When building for the embedded target, the cc crate needs to find the
+# Xtensa C compiler installed by `espup`. If it is not picked up
+# automatically, set the CC env var or uncomment the line below.
+#
+# [env]
+# CC_xtensa_esp32s3_none_elf = "xtensa-esp32s3-elf-gcc"
+
+[target.xtensa-esp32s3-none-elf]
+# rmp3 also uses cc to compile minimp3; both libraries need the same toolchain.
+# Run `cargo build --target xtensa-esp32s3-none-elf` after `espup install`.

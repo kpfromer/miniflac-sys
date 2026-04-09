@@ -1,0 +1,24 @@
+[package]
+name = "audio-decoder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rmp3 = { version = "0.3", default-features = false }
+
+[build-dependencies]
+cc = "1.2"
+
+[features]
+default = []
+# Enable std support (for host-side tests)
+std = []
+
+[dev-dependencies]
+# Used in integration tests on host
+
+[profile.dev]
+opt-level = 2
+
+[profile.release]
+opt-level = 2
