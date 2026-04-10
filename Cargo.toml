@@ -15,6 +15,12 @@ std = []
 
 [dev-dependencies]
 # Used in integration tests on host
+clap = { version = "4", features = ["derive"] }
+rodio = "0.19"
+
+[[example]]
+name = "play"
+required-features = ["std"]
 
 [profile.dev]
 opt-level = 2
