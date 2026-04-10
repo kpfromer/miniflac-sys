@@ -19,8 +19,5 @@
 
 mod flac;
 
-/// Reference Core 1 playback loop (not a binary; documents integration pattern).
-pub mod audio_loop;
-
 pub use flac::{DecodedFrame, FlacDecoder, FlacError, StreamInfo};
 pub use flac::{MAX_BLOCK_SIZE, MAX_CHANNELS, MAX_SAMPLES_PER_FRAME};

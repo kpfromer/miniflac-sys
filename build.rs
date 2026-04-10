@@ -1,7 +1,7 @@
 fn main() {
     cc::Build::new()
         .file("miniflac_impl.c")
-        .include(".")          // so miniflac_impl.c can find miniflac/miniflac.h
+        .include(".") // so miniflac_impl.c can find miniflac/miniflac.h
         .opt_level(2)
         .warnings(false)
         .compile("miniflac");
