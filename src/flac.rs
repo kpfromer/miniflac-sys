@@ -171,52 +171,51 @@ pub enum FlacError {
 }
 
 // ---------------------------------------------------------------------------
-// AlignedStorage — miniflac_t needs 8-byte alignment (contains uint64_t)
+// Internal storage size for miniflac_t
 // ---------------------------------------------------------------------------
 
+/// miniflac_size() == 560 bytes for v1.1.3. We round up to the next power of
+/// two (1024) so there is comfortable headroom for future miniflac versions
+/// without exposing the size as a public API surface.
+const MINIFLAC_STORAGE_SIZE: usize = 1024;
+
+/// 8-byte aligned opaque storage for miniflac_t (contains uint64_t members).
 #[repr(C, align(8))]
-struct AlignedStorage<const N: usize>([u8; N]);
+struct MiniflacStorage([u8; MINIFLAC_STORAGE_SIZE]);
 
 // ---------------------------------------------------------------------------
 // FlacDecoder
 // ---------------------------------------------------------------------------
 
-/// Zero-allocation FLAC decoder backed by miniflac.
+/// Zero-allocation FLAC decoder backed by miniflac v1.1.3.
 ///
-/// `S` sets the size of the opaque `miniflac_t` storage. The default 16 384
-/// bytes is verified at runtime to be sufficient for miniflac v1.1.3
-/// (`miniflac_size()` = 560 bytes; the larger default gives ample headroom
-/// for future versions). Call `init()` before any other method.
-///
-/// The decoder also holds per-channel `[i32; MAX_BLOCK_SIZE]` output buffers
-/// for miniflac to write decoded samples into.
-pub struct FlacDecoder<const S: usize = 16384> {
-    /// Opaque miniflac_t state.
-    storage: AlignedStorage<S>,
-    /// Per-channel int32 output buffers for miniflac_decode.
-    /// miniflac writes samples here; we then convert + interleave into DecodedFrame.
+/// Call `init()` before any other method. `new()` is `const` so the decoder
+/// can live in a `static` (e.g. via `static_cell::StaticCell`).
+pub struct FlacDecoder {
+    /// Opaque miniflac_t state (560 bytes measured; 1024 allocated).
+    storage: MiniflacStorage,
+    /// Per-channel int32 output buffers that miniflac writes into.
     channel_bufs: [[i32; MAX_BLOCK_SIZE]; MAX_CHANNELS],
     initialized: bool,
 }
 
-impl<const S: usize> FlacDecoder<S> {
+impl FlacDecoder {
     /// Construct an uninitialised decoder. Call `init()` before use.
-    /// `const fn` so it can be used in `static` initialisers.
     pub const fn new() -> Self {
         Self {
-            storage: AlignedStorage([0u8; S]),
+            storage: MiniflacStorage([0u8; MINIFLAC_STORAGE_SIZE]),
             channel_bufs: [[0i32; MAX_BLOCK_SIZE]; MAX_CHANNELS],
             initialized: false,
         }
     }
 
     /// Initialise (or re-initialise) the miniflac decoder for native FLAC.
-    /// Panics if `S` is smaller than `miniflac_size()`.
+    /// Asserts at runtime that MINIFLAC_STORAGE_SIZE >= miniflac_size().
     pub fn init(&mut self) {
         let required = unsafe { ffi::miniflac_size() };
         assert!(
-            S >= required,
-            "FlacDecoder<{S}> storage too small: miniflac_size()={required}"
+            MINIFLAC_STORAGE_SIZE >= required,
+            "MINIFLAC_STORAGE_SIZE={MINIFLAC_STORAGE_SIZE} < miniflac_size()={required}; bump the constant"
         );
         unsafe {
             ffi::miniflac_init(self.flac_ptr(), ffi::MINIFLAC_CONTAINER_NATIVE);
