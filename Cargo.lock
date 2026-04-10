@@ -7,7 +7,6 @@ name = "audio-decoder"
 version = "0.1.0"
 dependencies = [
  "cc",
- "rmp3",
 ]
 
 [[package]]
@@ -25,22 +24,6 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
-
-[[package]]
-name = "libc"
-version = "0.2.184"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
-
-[[package]]
-name = "rmp3"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3d9fb2c89a819645c57007782fd4db5bfa1abe290e1df5f530a441dc21ab1ad"
-dependencies = [
- "cc",
- "libc",
-]
 
 [[package]]
 name = "shlex"

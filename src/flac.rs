@@ -152,20 +152,6 @@ impl DecodedFrame {
         n
     }
 
-    /// Construct from already-interleaved i16 PCM (used by the MP3 path).
-    /// `src.len()` is clamped to MAX_SAMPLES_PER_FRAME.
-    pub(crate) fn from_pcm(
-        sample_rate: u32,
-        channels: u8,
-        bps: u8,
-        block_size: u16,
-        src: &[i16],
-    ) -> Self {
-        let n = src.len().min(MAX_SAMPLES_PER_FRAME);
-        let mut samples = [0i16; MAX_SAMPLES_PER_FRAME];
-        samples[..n].copy_from_slice(&src[..n]);
-        DecodedFrame { sample_rate, channels, bps, block_size, sample_count: n, samples }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -379,29 +365,35 @@ impl<const S: usize> FlacDecoder<S> {
         if data.len() > u32::MAX as usize {
             return Err(FlacError::InputTooLong);
         }
-        let len = data.len() as u32;
-        let ptr = data.as_ptr();
+
+        // Each miniflac_streaminfo_* function resets br.pos = 0 internally, so
+        // every call must receive a slice starting at the current byte offset.
+        // Leftover bits in br.val/br.bits carry across calls automatically.
+        let mut offset = 0usize;
         let flac = self.flac_ptr();
 
         macro_rules! read_field {
             ($fn:ident, $ty:ty) => {{
+                let slice = &data[offset..];
                 let mut val: $ty = 0;
                 let mut consumed: u32 = 0;
-                let r = unsafe { ffi::$fn(flac, ptr, len, &mut consumed, &mut val) };
+                let r = unsafe {
+                    ffi::$fn(flac, slice.as_ptr(), slice.len() as u32, &mut consumed, &mut val)
+                };
                 match r {
-                    ffi::MINIFLAC_OK => (consumed as usize, val),
-                    ffi::MINIFLAC_CONTINUE => return Ok((consumed as usize, None)),
+                    ffi::MINIFLAC_OK => { offset += consumed as usize; val }
+                    ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
                     e => return Err(FlacError::Miniflac(e)),
                 }
             }};
         }
 
-        let (_, sample_rate) = read_field!(miniflac_streaminfo_sample_rate, u32);
-        let (_, channels) = read_field!(miniflac_streaminfo_channels, u8);
-        let (_, bps) = read_field!(miniflac_streaminfo_bps, u8);
-        let (consumed, total_samples) = read_field!(miniflac_streaminfo_total_samples, u64);
+        let sample_rate   = read_field!(miniflac_streaminfo_sample_rate, u32);
+        let channels      = read_field!(miniflac_streaminfo_channels, u8);
+        let bps           = read_field!(miniflac_streaminfo_bps, u8);
+        let total_samples = read_field!(miniflac_streaminfo_total_samples, u64);
 
-        Ok((consumed, Some(StreamInfo { sample_rate, channels, bps, total_samples })))
+        Ok((offset, Some(StreamInfo { sample_rate, channels, bps, total_samples })))
     }
 }
 
