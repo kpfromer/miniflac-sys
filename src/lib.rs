@@ -20,4 +20,5 @@
 mod flac;
 
 pub use flac::{DecodedFrame, FlacDecoder, FlacError, StreamInfo};
+pub use flac::{VorbisComments, DefaultVorbisComments, PictureInfo, DefaultPictureInfo};
 pub use flac::{MAX_BLOCK_SIZE, MAX_CHANNELS, MAX_SAMPLES_PER_FRAME};

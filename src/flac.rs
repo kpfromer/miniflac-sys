@@ -29,6 +29,7 @@ mod ffi {
     pub(super) type MiniflacResult = i32;
     pub(super) const MINIFLAC_OK: MiniflacResult = 1;
     pub(super) const MINIFLAC_CONTINUE: MiniflacResult = 0;
+    pub(super) const MINIFLAC_METADATA_END: MiniflacResult = 2;
 
     /// MINIFLAC_CONTAINER enum values (underlying type is C `int`).
     pub(super) const MINIFLAC_CONTAINER_NATIVE: c_int = 1;
@@ -105,6 +106,148 @@ mod ffi {
             length: u32,
             out_length: *mut u32,
             total_samples: *mut u64,
+        ) -> MiniflacResult;
+
+        // --- Vorbis Comment metadata readers ---
+        pub(super) fn miniflac_vorbis_comment_vendor_length(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            vendor_length: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_vorbis_comment_vendor_string(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            buffer: *mut u8,
+            buffer_length: u32,
+            buffer_used: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_vorbis_comment_total(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            total_comments: *mut u32,
+        ) -> MiniflacResult;
+
+        /// Returns MINIFLAC_METADATA_END when out of comments.
+        pub(super) fn miniflac_vorbis_comment_length(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            comment_length: *mut u32,
+        ) -> MiniflacResult;
+
+        /// Returns MINIFLAC_METADATA_END when out of comments.
+        pub(super) fn miniflac_vorbis_comment_string(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            buffer: *mut u8,
+            buffer_length: u32,
+            buffer_used: *mut u32,
+        ) -> MiniflacResult;
+
+        // --- Picture metadata readers ---
+        pub(super) fn miniflac_picture_type(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            picture_type: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_mime_length(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            mime_length: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_mime_string(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            buffer: *mut u8,
+            buffer_length: u32,
+            buffer_used: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_description_length(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            description_length: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_description_string(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            buffer: *mut u8,
+            buffer_length: u32,
+            buffer_used: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_width(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            width: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_height(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            height: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_colordepth(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            colordepth: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_totalcolors(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            totalcolors: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_length(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            picture_length: *mut u32,
+        ) -> MiniflacResult;
+
+        pub(super) fn miniflac_picture_data(
+            flac: *mut Miniflac,
+            data: *const u8,
+            length: u32,
+            out_length: *mut u32,
+            buffer: *mut u8,
+            buffer_length: u32,
+            buffer_used: *mut u32,
         ) -> MiniflacResult;
     }
 }
@@ -398,6 +541,268 @@ impl FlacDecoder {
 
         Ok((offset, Some(StreamInfo { sample_rate, channels, bps, total_samples })))
     }
+
+    // -----------------------------------------------------------------------
+    // read_vorbis_comments
+    // -----------------------------------------------------------------------
+
+    /// Read Vorbis Comment metadata (artist, title, album, etc.).
+    ///
+    /// Returns `(bytes_consumed, Some(comments))` on success, or
+    /// `(bytes_consumed, None)` if more data is needed (MINIFLAC_CONTINUE).
+    ///
+    /// Generic parameters control buffer sizes:
+    /// - `V`: max vendor string bytes
+    /// - `C`: max bytes per comment string
+    /// - `N`: max number of comments stored
+    pub fn read_vorbis_comments<const V: usize, const C: usize, const N: usize>(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(usize, Option<VorbisComments<V, C, N>>), FlacError> {
+        debug_assert!(self.initialized);
+        if data.len() > u32::MAX as usize {
+            return Err(FlacError::InputTooLong);
+        }
+
+        let mut offset = 0usize;
+        let flac = self.flac_ptr();
+
+        macro_rules! read_u32 {
+            ($fn:ident) => {{
+                let slice = &data[offset..];
+                let mut val: u32 = 0;
+                let mut consumed: u32 = 0;
+                let r = unsafe {
+                    ffi::$fn(flac, slice.as_ptr(), slice.len() as u32, &mut consumed, &mut val)
+                };
+                match r {
+                    ffi::MINIFLAC_OK => { offset += consumed as usize; val }
+                    ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
+                    e => return Err(FlacError::Miniflac(e)),
+                }
+            }};
+        }
+
+        macro_rules! read_string {
+            ($fn:ident, $cap:expr) => {{
+                let slice = &data[offset..];
+                let mut buf = [0u8; $cap];
+                let mut used: u32 = 0;
+                let mut consumed: u32 = 0;
+                let r = unsafe {
+                    ffi::$fn(
+                        flac,
+                        slice.as_ptr(),
+                        slice.len() as u32,
+                        &mut consumed,
+                        buf.as_mut_ptr(),
+                        $cap as u32,
+                        &mut used,
+                    )
+                };
+                match r {
+                    ffi::MINIFLAC_OK => {
+                        offset += consumed as usize;
+                        let mut v = heapless::Vec::<u8, $cap>::new();
+                        let copy_len = (used as usize).min($cap);
+                        // unwrap safe: copy_len <= capacity
+                        v.extend_from_slice(&buf[..copy_len]).ok();
+                        v
+                    }
+                    ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
+                    e => return Err(FlacError::Miniflac(e)),
+                }
+            }};
+        }
+
+        let _vendor_length = read_u32!(miniflac_vorbis_comment_vendor_length);
+        let vendor = read_string!(miniflac_vorbis_comment_vendor_string, V);
+        let total = read_u32!(miniflac_vorbis_comment_total);
+
+        let mut comments: heapless::Vec<heapless::Vec<u8, C>, N> = heapless::Vec::new();
+
+        for _ in 0..total {
+            // Try reading the next comment length — METADATA_END means no more
+            let slice = &data[offset..];
+            let mut comment_len: u32 = 0;
+            let mut consumed: u32 = 0;
+            let r = unsafe {
+                ffi::miniflac_vorbis_comment_length(
+                    flac,
+                    slice.as_ptr(),
+                    slice.len() as u32,
+                    &mut consumed,
+                    &mut comment_len,
+                )
+            };
+            match r {
+                ffi::MINIFLAC_OK => { offset += consumed as usize; }
+                ffi::MINIFLAC_METADATA_END => { offset += consumed as usize; break; }
+                ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
+                e => return Err(FlacError::Miniflac(e)),
+            }
+
+            if comments.len() < N {
+                let comment = read_string!(miniflac_vorbis_comment_string, C);
+                let _ = comments.push(comment);
+            } else {
+                // Skip this comment — no room in buffer
+                let slice = &data[offset..];
+                let mut consumed: u32 = 0;
+                let mut used: u32 = 0;
+                let r = unsafe {
+                    ffi::miniflac_vorbis_comment_string(
+                        flac,
+                        slice.as_ptr(),
+                        slice.len() as u32,
+                        &mut consumed,
+                        core::ptr::null_mut(),
+                        0,
+                        &mut used,
+                    )
+                };
+                match r {
+                    ffi::MINIFLAC_OK => { offset += consumed as usize; }
+                    ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
+                    e => return Err(FlacError::Miniflac(e)),
+                }
+            }
+        }
+
+        Ok((offset, Some(VorbisComments { vendor, comments, total_in_file: total })))
+    }
+
+    // -----------------------------------------------------------------------
+    // read_picture_info
+    // -----------------------------------------------------------------------
+
+    /// Read PICTURE metadata block fields (excludes image data).
+    ///
+    /// Returns `(bytes_consumed, Some(info))` on success, or
+    /// `(bytes_consumed, None)` if more data is needed (MINIFLAC_CONTINUE).
+    pub fn read_picture_info<const M: usize, const D: usize>(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(usize, Option<PictureInfo<M, D>>), FlacError> {
+        debug_assert!(self.initialized);
+        if data.len() > u32::MAX as usize {
+            return Err(FlacError::InputTooLong);
+        }
+
+        let mut offset = 0usize;
+        let flac = self.flac_ptr();
+
+        macro_rules! read_u32 {
+            ($fn:ident) => {{
+                let slice = &data[offset..];
+                let mut val: u32 = 0;
+                let mut consumed: u32 = 0;
+                let r = unsafe {
+                    ffi::$fn(flac, slice.as_ptr(), slice.len() as u32, &mut consumed, &mut val)
+                };
+                match r {
+                    ffi::MINIFLAC_OK => { offset += consumed as usize; val }
+                    ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
+                    e => return Err(FlacError::Miniflac(e)),
+                }
+            }};
+        }
+
+        macro_rules! read_string {
+            ($fn:ident, $cap:expr) => {{
+                let slice = &data[offset..];
+                let mut buf = [0u8; $cap];
+                let mut used: u32 = 0;
+                let mut consumed: u32 = 0;
+                let r = unsafe {
+                    ffi::$fn(
+                        flac,
+                        slice.as_ptr(),
+                        slice.len() as u32,
+                        &mut consumed,
+                        buf.as_mut_ptr(),
+                        $cap as u32,
+                        &mut used,
+                    )
+                };
+                match r {
+                    ffi::MINIFLAC_OK => {
+                        offset += consumed as usize;
+                        let mut v = heapless::Vec::<u8, $cap>::new();
+                        let copy_len = (used as usize).min($cap);
+                        v.extend_from_slice(&buf[..copy_len]).ok();
+                        v
+                    }
+                    ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
+                    e => return Err(FlacError::Miniflac(e)),
+                }
+            }};
+        }
+
+        let picture_type = read_u32!(miniflac_picture_type);
+        let _mime_length = read_u32!(miniflac_picture_mime_length);
+        let mime = read_string!(miniflac_picture_mime_string, M);
+        let _desc_length = read_u32!(miniflac_picture_description_length);
+        let description = read_string!(miniflac_picture_description_string, D);
+        let width = read_u32!(miniflac_picture_width);
+        let height = read_u32!(miniflac_picture_height);
+        let color_depth = read_u32!(miniflac_picture_colordepth);
+        let total_colors = read_u32!(miniflac_picture_totalcolors);
+        let data_length = read_u32!(miniflac_picture_length);
+
+        Ok((offset, Some(PictureInfo {
+            picture_type,
+            mime,
+            description,
+            width,
+            height,
+            color_depth,
+            total_colors,
+            data_length,
+        })))
+    }
+
+    // -----------------------------------------------------------------------
+    // read_picture_data
+    // -----------------------------------------------------------------------
+
+    /// Read PICTURE image data into a caller-provided buffer.
+    ///
+    /// Call after `read_picture_info()` to get the actual image bytes.
+    /// `buf` should be sized from `PictureInfo::data_length`.
+    ///
+    /// Returns `(bytes_consumed_from_input, bytes_written_to_buf)`.
+    pub fn read_picture_data(
+        &mut self,
+        data: &[u8],
+        buf: &mut [u8],
+    ) -> Result<(usize, usize), FlacError> {
+        debug_assert!(self.initialized);
+        if data.len() > u32::MAX as usize {
+            return Err(FlacError::InputTooLong);
+        }
+
+        let mut consumed: u32 = 0;
+        let mut used: u32 = 0;
+        let r = unsafe {
+            ffi::miniflac_picture_data(
+                self.flac_ptr(),
+                data.as_ptr(),
+                data.len() as u32,
+                &mut consumed,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+                &mut used,
+            )
+        };
+        match r {
+            ffi::MINIFLAC_OK | ffi::MINIFLAC_METADATA_END => {
+                Ok((consumed as usize, used as usize))
+            }
+            ffi::MINIFLAC_CONTINUE => Ok((consumed as usize, used as usize)),
+            e => Err(FlacError::Miniflac(e)),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +817,44 @@ pub struct StreamInfo {
     pub bps: u8,
     pub total_samples: u64,
 }
+
+// ---------------------------------------------------------------------------
+// VorbisComments
+// ---------------------------------------------------------------------------
+
+/// A collection of parsed Vorbis Comments.
+/// V = max vendor string bytes, C = max bytes per comment, N = max comments.
+#[derive(Debug, Clone)]
+pub struct VorbisComments<const V: usize, const C: usize, const N: usize> {
+    pub vendor: heapless::Vec<u8, V>,
+    pub comments: heapless::Vec<heapless::Vec<u8, C>, N>,
+    /// Total comments in file (may exceed N, extras are skipped).
+    pub total_in_file: u32,
+}
+
+/// Default type alias: 128-byte vendor, 256-byte comments, up to 16 comments.
+pub type DefaultVorbisComments = VorbisComments<128, 256, 16>;
+
+// ---------------------------------------------------------------------------
+// PictureInfo
+// ---------------------------------------------------------------------------
+
+/// Metadata from a FLAC PICTURE block (excludes image data).
+/// M = max MIME bytes, D = max description bytes.
+#[derive(Debug, Clone)]
+pub struct PictureInfo<const M: usize, const D: usize> {
+    pub picture_type: u32,
+    pub mime: heapless::Vec<u8, M>,
+    pub description: heapless::Vec<u8, D>,
+    pub width: u32,
+    pub height: u32,
+    pub color_depth: u32,
+    pub total_colors: u32,
+    pub data_length: u32,
+}
+
+/// Default type alias: 32-byte MIME, 64-byte description.
+pub type DefaultPictureInfo = PictureInfo<32, 64>;
 
 // ---------------------------------------------------------------------------
 // Helpers

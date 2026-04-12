@@ -256,3 +256,204 @@ fn copy_interleaved_i16_truncates_to_dst_len() {
     assert_eq!(copied, half);
     assert_eq!(&dst, &frame.samples()[..half]);
 }
+
+// ---------------------------------------------------------------------------
+// Vorbis Comments
+// ---------------------------------------------------------------------------
+
+/// Helper: sync past metadata blocks until we reach one we want, or audio frames.
+/// Returns (new_offset, synced) where synced=true means sync succeeded.
+fn sync_loop(dec: &mut FlacDecoder, data: &[u8], mut pos: usize) -> (usize, bool) {
+    while pos < data.len() {
+        match dec.sync(&data[pos..]).expect("sync error") {
+            (consumed, true) => { pos += consumed; return (pos, true); }
+            (consumed, false) => {
+                if consumed == 0 { break; }
+                pos += consumed;
+            }
+        }
+    }
+    (pos, false)
+}
+
+#[test]
+fn read_vorbis_comments_from_440hz() {
+    let data = load("test_440hz.flac");
+    let mut dec = FlacDecoder::new();
+    dec.init();
+
+    // Sync to first metadata block boundary
+    let mut pos = 0;
+
+    // Read streaminfo first (it's the first metadata block)
+    let (consumed, info) = dec.read_streaminfo(&data[pos..]).expect("streaminfo error");
+    assert!(info.is_some());
+    pos += consumed;
+
+    // Sync to next metadata block
+    let (new_pos, synced) = sync_loop(&mut dec, &data, pos);
+    assert!(synced, "failed to sync past streaminfo");
+    pos = new_pos;
+
+    // Read vorbis comments
+    let (consumed, comments) = dec
+        .read_vorbis_comments::<128, 256, 16>(&data[pos..])
+        .expect("vorbis comment error");
+    let comments = comments.expect("expected vorbis comments, got CONTINUE");
+    pos += consumed;
+    let _ = pos;
+
+    // The test file was created with ffmpeg, so vendor should contain "Lavf"
+    let vendor_str = core::str::from_utf8(&comments.vendor).unwrap_or("");
+    assert!(
+        vendor_str.contains("Lavf"),
+        "vendor should contain 'Lavf', got: {vendor_str}"
+    );
+
+    // Should have at least 1 comment (encoder=...)
+    assert!(comments.total_in_file >= 1, "expected at least 1 comment");
+    assert!(!comments.comments.is_empty(), "no comments parsed");
+
+    // First comment should contain "encoder" (or one of them should)
+    let has_encoder = comments.comments.iter().any(|c| {
+        let s = core::str::from_utf8(c).unwrap_or("");
+        s.to_lowercase().contains("encoder")
+    });
+    assert!(has_encoder, "expected an 'encoder' comment");
+}
+
+#[test]
+fn read_vorbis_comments_then_decode() {
+    let data = load("test_440hz.flac");
+    let mut dec = FlacDecoder::new();
+    dec.init();
+
+    let mut pos = 0;
+
+    // Read streaminfo
+    let (consumed, _) = dec.read_streaminfo(&data[pos..]).expect("streaminfo error");
+    pos += consumed;
+
+    // Sync to vorbis comment block
+    let (new_pos, synced) = sync_loop(&mut dec, &data, pos);
+    assert!(synced);
+    pos = new_pos;
+
+    // Read vorbis comments
+    let (consumed, comments) = dec
+        .read_vorbis_comments::<128, 256, 16>(&data[pos..])
+        .expect("vorbis comment error");
+    assert!(comments.is_some(), "expected vorbis comments");
+    pos += consumed;
+
+    // Now sync to audio frames and decode — verify metadata reading didn't break state
+    loop {
+        let (new_pos, synced) = sync_loop(&mut dec, &data, pos);
+        pos = new_pos;
+        if !synced { break; }
+
+        match dec.decode(&data[pos..]).expect("decode error") {
+            (consumed, Some(frame)) => {
+                pos += consumed;
+                assert_eq!(frame.sample_rate, 44100);
+                // Successfully decoded at least one frame after reading metadata
+                return;
+            }
+            (consumed, None) => {
+                pos += consumed;
+            }
+        }
+    }
+
+    // If we get here without returning, try decoding directly
+    while pos < data.len() {
+        match dec.decode(&data[pos..]).expect("decode error") {
+            (consumed, Some(frame)) => {
+                assert_eq!(frame.sample_rate, 44100);
+                return;
+            }
+            (consumed, None) => {
+                if consumed == 0 { break; }
+                pos += consumed;
+            }
+        }
+    }
+    panic!("failed to decode any audio frames after reading vorbis comments");
+}
+
+#[test]
+fn read_picture_info_from_art_file() {
+    // Block order in test_440hz_art.flac: STREAMINFO → PICTURE → VORBIS_COMMENT → PADDING
+    let data = load("test_440hz_art.flac");
+    let mut dec = FlacDecoder::new();
+    dec.init();
+
+    let mut pos = 0;
+
+    // Read streaminfo
+    let (consumed, _) = dec.read_streaminfo(&data[pos..]).expect("streaminfo");
+    pos += consumed;
+
+    // Sync to next metadata block (PICTURE)
+    let (new_pos, synced) = sync_loop(&mut dec, &data, pos);
+    assert!(synced, "failed to sync past streaminfo");
+    pos = new_pos;
+
+    // Read picture info
+    let (consumed, info) = dec
+        .read_picture_info::<32, 64>(&data[pos..])
+        .expect("picture info error");
+    let info = info.expect("expected picture info");
+    pos += consumed;
+    let _ = pos;
+
+    let mime_str = core::str::from_utf8(&info.mime).unwrap_or("");
+    assert!(
+        mime_str.contains("png") || mime_str.contains("image"),
+        "expected PNG mime, got: {mime_str}"
+    );
+    assert_eq!(info.width, 8);
+    assert_eq!(info.height, 8);
+    assert!(info.data_length > 0, "expected non-zero data length");
+}
+
+#[test]
+fn read_picture_data_from_art_file() {
+    // Block order: STREAMINFO → PICTURE → VORBIS_COMMENT → PADDING
+    let data = load("test_440hz_art.flac");
+    let mut dec = FlacDecoder::new();
+    dec.init();
+
+    let mut pos = 0;
+
+    // Read streaminfo
+    let (consumed, _) = dec.read_streaminfo(&data[pos..]).expect("streaminfo");
+    pos += consumed;
+
+    // Sync to picture block
+    let (new_pos, synced) = sync_loop(&mut dec, &data, pos);
+    assert!(synced);
+    pos = new_pos;
+
+    // Read picture info
+    let (consumed, info) = dec
+        .read_picture_info::<32, 64>(&data[pos..])
+        .expect("picture info");
+    let info = info.expect("expected picture info");
+    pos += consumed;
+
+    // Read picture data
+    let mut pic_buf = vec![0u8; info.data_length as usize];
+    let (consumed, written) = dec
+        .read_picture_data(&data[pos..], &mut pic_buf)
+        .expect("picture data");
+    assert!(consumed > 0 || written > 0, "no data consumed or written");
+    assert!(written > 0, "no picture data written");
+
+    // Verify PNG magic bytes: 0x89 'P' 'N' 'G'
+    assert!(written >= 4, "picture data too short");
+    assert_eq!(pic_buf[0], 0x89, "expected PNG magic byte 0x89");
+    assert_eq!(pic_buf[1], b'P', "expected PNG magic byte 'P'");
+    assert_eq!(pic_buf[2], b'N', "expected PNG magic byte 'N'");
+    assert_eq!(pic_buf[3], b'G', "expected PNG magic byte 'G'");
+}
