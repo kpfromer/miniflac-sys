@@ -221,6 +221,21 @@ fn garbage_input_returns_error() {
     let _ = got_error; // crash = fail; error or quiet consume = pass
 }
 
+#[test]
+fn frame_sample_number_increases_by_block_size() {
+    let data = load("test_440hz.flac");
+    let frames = decode_all(&data);
+
+    assert!(!frames.is_empty());
+    assert_eq!(frames[0].sample_number, 0, "first frame should start at sample 0");
+
+    for w in frames.windows(2) {
+        let expected = w[0].sample_number + w[0].block_size as u64;
+        assert_eq!(w[1].sample_number, expected,
+            "sample_number mismatch: expected {expected}, got {}", w[1].sample_number);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // copy_interleaved_i16 with undersized destination
 // ---------------------------------------------------------------------------

@@ -72,6 +72,7 @@ mod ffi {
         pub(super) fn miniflac_frame_sample_rate(flac: *mut Miniflac) -> u32;
         pub(super) fn miniflac_frame_channels(flac: *mut Miniflac) -> u8;
         pub(super) fn miniflac_frame_bps(flac: *mut Miniflac) -> u8;
+        pub(super) fn miniflac_frame_sample_number(flac: *mut Miniflac) -> u64;
 
         // --- STREAMINFO metadata readers (push-style, callable before audio frames) ---
         pub(super) fn miniflac_streaminfo_sample_rate(
@@ -134,6 +135,7 @@ pub struct DecodedFrame {
     pub channels: u8,
     pub bps: u8,
     pub block_size: u16,
+    pub sample_number: u64,
     sample_count: usize,
     samples: [i16; MAX_SAMPLES_PER_FRAME],
 }
@@ -312,6 +314,7 @@ impl FlacDecoder {
                 let block_size = unsafe { ffi::miniflac_frame_block_size(self.flac_ptr()) };
                 let sample_rate = unsafe { ffi::miniflac_frame_sample_rate(self.flac_ptr()) };
                 let bps = unsafe { ffi::miniflac_frame_bps(self.flac_ptr()) };
+                let sample_number = unsafe { ffi::miniflac_frame_sample_number(self.flac_ptr()) };
 
                 if channels as usize > MAX_CHANNELS {
                     return Err(FlacError::TooManyChannels(channels));
@@ -326,6 +329,7 @@ impl FlacDecoder {
                     channels,
                     bps,
                     block_size,
+                    sample_number,
                     sample_count: 0,
                     samples: [0i16; MAX_SAMPLES_PER_FRAME],
                 };
