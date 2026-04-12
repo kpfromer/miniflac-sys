@@ -30,6 +30,7 @@ mod ffi {
     pub(super) const MINIFLAC_OK: MiniflacResult = 1;
     pub(super) const MINIFLAC_CONTINUE: MiniflacResult = 0;
     pub(super) const MINIFLAC_METADATA_END: MiniflacResult = 2;
+    pub(super) const MINIFLAC_ERROR: MiniflacResult = -1;
 
     /// MINIFLAC_CONTAINER enum values (underlying type is C `int`).
     pub(super) const MINIFLAC_CONTAINER_NATIVE: c_int = 1;
@@ -313,6 +314,23 @@ pub enum FlacError {
     TooManyChannels(u8),
     /// Decoded block size exceeded MAX_BLOCK_SIZE.
     BlockSizeTooLarge(u16),
+    /// Called a metadata reader on the wrong block type.
+    /// E.g. tried `read_vorbis_comments()` on a PICTURE block.
+    /// The caller should skip this block and try a different reader.
+    WrongBlockType,
+}
+
+impl FlacError {
+    /// Map a raw miniflac error code, promoting MINIFLAC_ERROR (-1) to
+    /// `WrongBlockType` when it occurs inside a metadata reader.
+    #[inline]
+    fn from_metadata_result(code: i32) -> Self {
+        if code == ffi::MINIFLAC_ERROR {
+            FlacError::WrongBlockType
+        } else {
+            FlacError::Miniflac(code)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -578,7 +596,7 @@ impl FlacDecoder {
                 match r {
                     ffi::MINIFLAC_OK => { offset += consumed as usize; val }
                     ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
-                    e => return Err(FlacError::Miniflac(e)),
+                    e => return Err(FlacError::from_metadata_result(e)),
                 }
             }};
         }
@@ -610,7 +628,7 @@ impl FlacDecoder {
                         v
                     }
                     ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
-                    e => return Err(FlacError::Miniflac(e)),
+                    e => return Err(FlacError::from_metadata_result(e)),
                 }
             }};
         }
@@ -639,7 +657,7 @@ impl FlacDecoder {
                 ffi::MINIFLAC_OK => { offset += consumed as usize; }
                 ffi::MINIFLAC_METADATA_END => { offset += consumed as usize; break; }
                 ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
-                e => return Err(FlacError::Miniflac(e)),
+                e => return Err(FlacError::from_metadata_result(e)),
             }
 
             if comments.len() < N {
@@ -664,7 +682,7 @@ impl FlacDecoder {
                 match r {
                     ffi::MINIFLAC_OK => { offset += consumed as usize; }
                     ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
-                    e => return Err(FlacError::Miniflac(e)),
+                    e => return Err(FlacError::from_metadata_result(e)),
                 }
             }
         }
@@ -703,7 +721,7 @@ impl FlacDecoder {
                 match r {
                     ffi::MINIFLAC_OK => { offset += consumed as usize; val }
                     ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
-                    e => return Err(FlacError::Miniflac(e)),
+                    e => return Err(FlacError::from_metadata_result(e)),
                 }
             }};
         }
@@ -734,7 +752,7 @@ impl FlacDecoder {
                         v
                     }
                     ffi::MINIFLAC_CONTINUE => return Ok((offset + consumed as usize, None)),
-                    e => return Err(FlacError::Miniflac(e)),
+                    e => return Err(FlacError::from_metadata_result(e)),
                 }
             }};
         }
@@ -800,7 +818,7 @@ impl FlacDecoder {
                 Ok((consumed as usize, used as usize))
             }
             ffi::MINIFLAC_CONTINUE => Ok((consumed as usize, used as usize)),
-            e => Err(FlacError::Miniflac(e)),
+            e => Err(FlacError::from_metadata_result(e)),
         }
     }
 }
